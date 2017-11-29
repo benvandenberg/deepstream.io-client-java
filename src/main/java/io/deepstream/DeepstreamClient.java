@@ -241,7 +241,7 @@ public class DeepstreamClient extends DeepstreamClientAbstract {
         try {
             loggedInLatch.await();
         } catch (InterruptedException e) {
-            loginResult[0] = new LoginResult(false, null, "An issue occured during login");
+            loginResult[0] = new LoginResult(false, null, "An issue occurred during login");
         }
 
         return loginResult[0];

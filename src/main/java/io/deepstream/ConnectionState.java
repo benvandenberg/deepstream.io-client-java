@@ -31,7 +31,7 @@ public enum ConnectionState {
      */
     OPEN,
     /**
-     * An error has occured on the connection, usually due to an recoverable connection drop or if no
+     * An error has occurred on the connection, usually due to an recoverable connection drop or if no
      * server exists to connect to
      */
     ERROR,

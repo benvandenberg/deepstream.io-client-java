@@ -27,4 +27,10 @@ interface Endpoint {
      * Forces the connection to be closed
      */
     void forceClose();
+
+    /**
+     * Retrieve the state of the endpoint. Useful for debugging purposes.
+     * @return The endpoint state.
+     */
+    EndpointState getEndpointState();
 }

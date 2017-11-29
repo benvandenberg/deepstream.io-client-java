@@ -6,7 +6,12 @@ import java.net.URISyntaxException;
 class JavaEndpointFactory implements EndpointFactory {
 
     @Override
-    public Endpoint createEndpoint(URI uri, Connection connection) throws URISyntaxException {
+    public Endpoint createEndpoint(URI uri, Connection connection ) throws URISyntaxException {
         return new JavaEndpointWebsocket(uri, connection);
+    }
+
+    @Override
+    public Endpoint createEndpoint(URI uri, Connection connection, int connectTimeout) throws URISyntaxException {
+        return new JavaEndpointWebsocket(uri, connection, connectTimeout);
     }
 }

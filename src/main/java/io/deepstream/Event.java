@@ -74,7 +74,23 @@ public enum Event {
      */
     TOO_MANY_AUTH_ATTEMPTS,
     /**
-     * To indicate the client has attempted to perform an action a connection that has been closed
+     * To indicate the client has attempt to login and it timed out
+     */
+    AUTH_TIMEOUT,
+    /**
+     * To indicate the client has attempted to login concurrently
+     */
+    IS_LOGGING_IN,
+    /**
+     * To indicate the client has attempted to perform an action on a connection that is authenticating
+     */
+    IS_AUTHENTICATING,
+    /**
+     * To indicate the client has attempted to perform an action on a connection that is open
+     */
+    IS_OPEN,
+    /**
+     * To indicate the client has attempted to perform an action on a connection that has been closed
      */
     IS_CLOSED,
     /**

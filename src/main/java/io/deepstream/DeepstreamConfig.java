@@ -29,6 +29,8 @@ class DeepstreamConfig {
     private void validateProperties() throws InvalidDeepstreamConfig {
         try {
             this.getPath();
+            this.getConnectTimeout();
+            this.getLoginTimeout();
             this.getReconnectIntervalIncrement();
             this.getMaxReconnectAttempts();
             this.getRpcAckTimeout();
@@ -48,6 +50,30 @@ class DeepstreamConfig {
 
     String getPath() {
         return getOption(ConfigOptions.PATH, "/deepstream");
+    }
+
+    Integer getConnectTimeout() {
+        String value = getOption(ConfigOptions.CONNECT_TIMEOUT, null);
+        if (value != null) {
+            Integer connectTimeout = Integer.parseInt(value);
+            if (connectTimeout > 0) {
+                return connectTimeout;
+            }
+            throw new IllegalArgumentException("connectTimeout must be greater than 0");
+        }
+        return null;
+    }
+
+    Integer getLoginTimeout() {
+        String value = getOption(ConfigOptions.LOGIN_TIMEOUT, null);
+        if (value != null) {
+            Integer loginTimeout = Integer.parseInt(value);
+            if (loginTimeout > 0) {
+                return loginTimeout;
+            }
+            throw new IllegalArgumentException("loginTimeout must be greater than 0");
+        }
+        return null;
     }
 
     int getReconnectIntervalIncrement() {
@@ -115,5 +141,4 @@ class DeepstreamConfig {
             return defaultValue;
         }
     }
-
 }

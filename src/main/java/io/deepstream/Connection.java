@@ -37,10 +37,11 @@ class Connection implements IConnection {
     private DeepstreamClient.LoginCallback loginCallback;
     private JsonElement authParameters;
 
-    private ExecutorService rpcThread;
-    private ExecutorService recordThread;
     private ExecutorService eventThread;
+    private ExecutorService loginThread;
     private ExecutorService presenceThread;
+    private ExecutorService recordThread;
+    private ExecutorService rpcThread;
 
     /**
      * Creates an endpoint and passed it to {@link Connection#Connection(String, DeepstreamConfig, DeepstreamClient, EndpointFactory, Endpoint)}
@@ -88,10 +89,50 @@ class Connection implements IConnection {
         this.endpoint = endpoint;
         this.endpointFactory = endpointFactory;
 
-        this.recordThread = Executors.newSingleThreadExecutor();
         this.eventThread = Executors.newSingleThreadExecutor();
-        this.rpcThread = Executors.newSingleThreadExecutor();
+        this.loginThread = Executors.newSingleThreadExecutor();
         this.presenceThread = Executors.newSingleThreadExecutor();
+        this.recordThread = Executors.newSingleThreadExecutor();
+        this.rpcThread = Executors.newSingleThreadExecutor();
+    }
+
+    /**
+     * Invoked when the login timer has expired.
+     */
+    synchronized void onLoginTimeout() {
+        if (this.loginCallback != null) {
+            this.client.onError(Topic.ERROR, Event.AUTH_TIMEOUT, "The client\'s login attempt timed out");
+            this.loginCallback.loginFailed(Event.AUTH_TIMEOUT, "The client\'s login attempt timed out");
+            this.loginCallback = null;
+        }
+    }
+
+    /**
+     * This class invokes the onLoginTimeout method when the login timer expires.
+     */
+    private static class LoginTimer implements Runnable {
+        private Connection connection;
+        private int timeout;
+
+        public LoginTimer(Connection connection, int timeout) {
+            this.connection = connection;
+            this.timeout = timeout;
+        }
+
+        @Override
+        public void run() {
+            while (timeout > 0) {
+                long timestamp = System.currentTimeMillis();
+                try {
+                    wait(timeout);
+                } catch (InterruptedException e) {
+                    // Ignore
+                }
+                long delta = System.currentTimeMillis() - timestamp;
+                timeout -= (int) delta;
+            }
+            this.connection.onLoginTimeout();
+        }
     }
 
     /**
@@ -101,29 +142,53 @@ class Connection implements IConnection {
      * connection
      */
     @ObjectiveCName("authenticate:loginCallback:")
-    void authenticate(JsonElement authParameters, DeepstreamClient.LoginCallback loginCallback) {
-        this.loginCallback = loginCallback;
+    synchronized void authenticate(JsonElement authParameters, DeepstreamClient.LoginCallback loginCallback) {
+        Event event = null;
+        String errMsg = null;
+        if (this.tooManyAuthAttempts || this.challengeDenied) {
+            event = Event.IS_CLOSED;
+            errMsg = "The client\'s connection was closed";
+        } else if (this.loginCallback != null) {
+            event = Event.IS_LOGGING_IN;
+            errMsg = "The client is logging in";
+        } else if (this.connectionState == ConnectionState.AUTHENTICATING) {
+            event = Event.IS_AUTHENTICATING;
+            errMsg = "The client\'s connection is authenticating";
+        } else if (this.connectionState == ConnectionState.OPEN) {
+            event = Event.IS_OPEN;
+            errMsg = "The client\'s connection is open";
+        }
+        if (this.loginCallback == null) {
+            this.loginCallback = loginCallback;
+        }
+        if (event != null && errMsg != null) {
+            if (this.loginCallback != null) {
+                this.client.onError(Topic.ERROR, event, errMsg);
+                this.loginCallback.loginFailed(event, errMsg);
+                this.loginCallback = null;
+            }
+            return;
+        }
 
-        if(authParameters != null) {
+        Integer loginTimeout = this.options.getLoginTimeout();
+        if (loginTimeout != null && this.loginCallback != null) {
+            this.loginThread.execute(new LoginTimer(this, loginTimeout));
+        }
+
+        if (authParameters != null) {
             this.authParameters = authParameters;
         } else {
             this.authParameters = new JsonObject();
         }
 
-        if( this.tooManyAuthAttempts || this.challengeDenied ) {
-            this.client.onError( Topic.ERROR, Event.IS_CLOSED, "The client\'s connection was closed" );
-            this.loginCallback.loginFailed(Event.IS_CLOSED, "The client\'s connection was closed");
-            return;
-        }
-
-        if( this.connectionState == ConnectionState.AWAITING_AUTHENTICATION ) {
+        if (this.connectionState == ConnectionState.AWAITING_AUTHENTICATION) {
             this.sendAuthMessage();
         }
     }
 
     @Override
     @ObjectiveCName("send:")
-    public void send( String message ) {
+    synchronized public void send( String message ) {
         if( this.connectionState != ConnectionState.OPEN ) {
             this.messageBuffer.append( message );
         } else {
@@ -151,11 +216,11 @@ class Connection implements IConnection {
         this.endpoint.send( authMessage );
     }
 
-    void addConnectionChangeListener( ConnectionStateListener connectionStateListener) {
+    synchronized void addConnectionChangeListener( ConnectionStateListener connectionStateListener) {
         this.connectStateListeners.add(connectionStateListener);
     }
 
-    void removeConnectionChangeListener( ConnectionStateListener connectionStateListener) {
+    synchronized void removeConnectionChangeListener( ConnectionStateListener connectionStateListener) {
         this.connectStateListeners.remove(connectionStateListener);
     }
 
@@ -163,7 +228,7 @@ class Connection implements IConnection {
         return this.connectionState;
     }
 
-    public void close(boolean forceClose) {
+    public synchronized void close(boolean forceClose) {
         this.deliberateClose = true;
 
         if(forceClose && endpoint != null) {
@@ -177,18 +242,25 @@ class Connection implements IConnection {
             this.reconnectTimeout = null;
         }
 
-        this.recordThread.shutdown();
         this.eventThread.shutdown();
-        this.rpcThread.shutdown();
         this.presenceThread.shutdown();
+        this.recordThread.shutdown();
+        this.rpcThread.shutdown();
+
+        if( this.loginCallback != null ) {
+            this.loginThread.shutdown();
+            this.client.onError( Topic.ERROR, Event.IS_CLOSED, "The client\'s connection was closed" );
+            this.loginCallback.loginFailed(Event.IS_CLOSED, "The client\'s connection was closed");
+            this.loginCallback = null;
+        }
     }
 
-    void onOpen() {
+    synchronized void onOpen() {
         this.setState( ConnectionState.AWAITING_CONNECTION );
     }
 
     @ObjectiveCName("onError:")
-    void onError(final String error ) {
+    synchronized void onError(final String error ) {
         this.setState( ConnectionState.ERROR );
 
         /*
@@ -204,7 +276,7 @@ class Connection implements IConnection {
     }
 
     @ObjectiveCName("onMessage:")
-    void onMessage(String rawMessage) {
+    synchronized void onMessage(String rawMessage) {
         List<Message> parsedMessages = MessageParser.parse( rawMessage, this.client );
         for (final Message message : parsedMessages) {
             if (message.topic == Topic.CONNECTION) {
@@ -245,7 +317,7 @@ class Connection implements IConnection {
         }
     }
 
-    void onClose() throws URISyntaxException {
+    synchronized void onClose() throws URISyntaxException {
         if( this.redirecting ) {
             this.redirecting = false;
             this.endpoint = this.createEndpoint();
@@ -299,10 +371,12 @@ class Connection implements IConnection {
             }
 
             if( this.loginCallback != null ) {
+                this.loginThread.shutdown();
                 this.loginCallback.loginFailed(
                         Event.getEvent( message.data[ 0 ] ),
                         MessageParser.convertTyped(message.data[1], this.client, this.options.getJsonParser())
                 );
+                this.loginCallback = null;
             }
         }
         else if( message.action == Actions.ACK ) {
@@ -314,12 +388,14 @@ class Connection implements IConnection {
             }
 
             if( this.loginCallback != null ) {
+                this.loginThread.shutdown();
                 try {
                     Object data = MessageParser.convertTyped(message.data[0], this.client, this.options.getJsonParser());
                     this.loginCallback.loginSuccess(data);
                 } catch (IndexOutOfBoundsException e) {
                     this.loginCallback.loginSuccess(null);
                 }
+                this.loginCallback = null;
             }
         }
     }
@@ -341,7 +417,7 @@ class Connection implements IConnection {
      * Set global connectivity state.
      * @param  {GlobalConnectivityState} globalConnectivityState Current global connectivity state
      */
-    protected void setGlobalConnectivityState(GlobalConnectivityState globalConnectivityState){
+    synchronized protected void setGlobalConnectivityState(GlobalConnectivityState globalConnectivityState){
         this.globalConnectivityState = globalConnectivityState;
         if(globalConnectivityState == GlobalConnectivityState.CONNECTED){
             if(this.connectionState == ConnectionState.CLOSED || this.connectionState == ConnectionState.ERROR) {
@@ -355,6 +431,13 @@ class Connection implements IConnection {
             this.reconnectionAttempt = 0;
             this.endpoint.forceClose();
             this.setState(ConnectionState.CLOSED);
+
+            if( this.loginCallback != null ) {
+                this.loginThread.shutdown();
+                this.client.onError( Topic.ERROR, Event.IS_CLOSED, "The client\'s connection was closed" );
+                this.loginCallback.loginFailed(Event.IS_CLOSED, "The client\'s connection was closed");
+                this.loginCallback = null;
+            }
         }
     }
 
@@ -382,8 +465,14 @@ class Connection implements IConnection {
     }
 
     private Endpoint createEndpoint() throws URISyntaxException {
+        Endpoint endpoint;
         URI uri = parseUri(url, this.options.getPath());
-        Endpoint endpoint = this.endpointFactory.createEndpoint(uri, this);
+        Integer connectTimeout = this.options.getConnectTimeout();
+        if( connectTimeout == null ) {
+            endpoint = this.endpointFactory.createEndpoint(uri, this);
+        } else {
+            endpoint = this.endpointFactory.createEndpoint(uri, this, connectTimeout);
+        }
         endpoint.open();
         return endpoint;
     }

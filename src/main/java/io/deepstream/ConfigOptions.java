@@ -14,6 +14,19 @@ public enum ConfigOptions {
      * Defaults to /deepstream
      */
     PATH("path"),
+
+    /**
+     * Specifies the number of milliseconds to wait when connecting a socket to the deepstream server.
+     * This property is optional. When not set, the connect timeout defaults to the OS settings.
+     */
+    CONNECT_TIMEOUT("connectTimeout"),
+
+    /**
+     * Specifies the number of milliseconds to wait when attempting to login to the deepstream server.
+     * This property is optional. When not set, the {@link DeepstreamClient#login} call will block indefinitely.
+     */
+    LOGIN_TIMEOUT("loginTimeout"),
+
     /**
      * Specifies the number of milliseconds by which the time until the next reconnection attempt will be incremented
      * after every unsuccessful attempt.

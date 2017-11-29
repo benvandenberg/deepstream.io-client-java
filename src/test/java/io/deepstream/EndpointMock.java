@@ -60,4 +60,9 @@ public class EndpointMock implements Endpoint {
     public void forceClose() {
 
     }
+
+    @Override
+    public EndpointState getEndpointState() {
+        return EndpointState.OPEN;
+    }
 }
